@@ -550,7 +550,7 @@ func imageForKafka() (string, error) {
 	if !found {
 		return "", fmt.Errorf("Unable to find %s environment variable with the image", imageEnvVar)
 	}*/
-	image := "docker.io/kubernetesbigdataeg/kafka-alpine:3.4.0-1"
+	image := "docker.io/kubernetesbigdataeg/kafka:3.4.0-1"
 	return image, nil
 }
 
