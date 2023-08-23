@@ -9,7 +9,7 @@ plugins:
       kind: Kafka
       options:
         containerCommand: memcached,-m=64,modern,-v
-        image: docker.io/kubernetesbigdataeg/kafka-alpine:3.4.0-1
+        image: docker.io/kubernetesbigdataeg/kafka:3.4.0-1
         runAsUser: "1000"
       version: v1alpha1
   manifests.sdk.operatorframework.io/v2: {}
