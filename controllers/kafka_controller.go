@@ -416,7 +416,7 @@ func (r *KafkaReconciler) stateFulSetForKafka(
 		return nil, err
 	}
 
-	fastdisks := "fast-disks"
+	storageClass := "longhorn"
 
 	dep := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
@@ -471,7 +471,7 @@ func (r *KafkaReconciler) stateFulSetForKafka(
 							},
 							{
 								Name:  "KAFKA_ZOOKEEPER_CONNECT",
-								Value: "zk-0.zk-hs.default.svc.cluster.local:2181,zk-1.zk-hs.default.svc.cluster.local:2181,zk-2.zk-hs.default.svc.cluster.local:2181",
+								Value: "zookeeper-0.zookeeper-hs.default.svc.cluster.local:2181,zookeeper-1.zookeeper-hs.default.svc.cluster.local:2181,zookeeper-2.zookeeper-hs.default.svc.cluster.local:2181",
 							},
 							{
 								Name:  "KAFKA_LOG_DIRS",
@@ -511,7 +511,7 @@ func (r *KafkaReconciler) stateFulSetForKafka(
 							corev1.ResourceStorage: resource.MustParse("150Mi"),
 						},
 					},
-					StorageClassName: &fastdisks,
+					StorageClassName: &storageClass,
 				},
 			}},
 		},
