@@ -3,101 +3,50 @@
 # Store original IFS config, so we can restore it at various stages
 ORIG_IFS=$IFS
 
-if [[ -z "$KAFKA_ZOOKEEPER_CONNECT" ]]; then
-    echo "ERROR: missing mandatory config: KAFKA_ZOOKEEPER_CONNECT"
-    exit 1
+if [[ -z "${KAFKA_START_MODE}" || ( "${KAFKA_START_MODE}" != "kraft" && "${KAFKA_START_MODE}" != "zookeeper" ) ]]; then
+    echo "WARNING: missing config: KAFKA_START_MODE must be defined as 'zookeeper' or 'kraft'. Set to 'kraft' by default."
+    KAFKA_START_MODE="kraft"
 fi
+
+if [[ "$KAFKA_START_MODE" == "zookeeper" ]]; then
+    if [[ -z "$KAFKA_ZOOKEEPER_CONNECT" ]]; then
+        echo "ERROR: missing mandatory config: KAFKA_ZOOKEEPER_CONNECT"
+        exit 1
+    fi
+    CONF_FILE=$KAFKA_HOME/config/server.properties
+    
+    if [[ -z "$KAFKA_BROKER_ID" ]]; then
+        export KAFKA_BROKER_ID=$(( ${POD_NAME##*-} + 1 ))
+    fi;
+fi
+
+if [[ "$KAFKA_START_MODE" == "kraft" ]]; then
+    CONF_FILE=$KAFKA_HOME/config/kraft/server.properties
+    
+    if [[ -z "$KAFKA_NODE_ID" ]]; then
+        export KAFKA_NODE_ID=$(( ${POD_NAME##*-} + 1 ))
+    fi;
+fi
+
+if [[ -z "$KAFKA_LISTENERS" ]]; then
+    echo "ERROR: missing mandatory config: KAFKA_LISTENERS"
+    exit 1
+fi;
+
+if [[ -z "$KAFKA_ADVERTISED_LISTENERS" ]]; then
+    echo "ERROR: missing mandatory config: KAFKA_ADVERTISED_LISTENERS"
+    exit 1
+fi;
 
 if [[ -z "$KAFKA_PORT" ]]; then
     export KAFKA_PORT=9092
-fi
+fi;
 
 create-topics.sh &
 unset KAFKA_CREATE_TOPICS
 
-if [[ -z "$KAFKA_ADVERTISED_PORT" && \
-  -z "$KAFKA_LISTENERS" && \
-  -z "$KAFKA_ADVERTISED_LISTENERS" && \
-  -S /var/run/docker.sock ]]; then
-    KAFKA_ADVERTISED_PORT=$(docker port "$(hostname)" $KAFKA_PORT | sed -r 's/.*:(.*)/\1/g')
-    export KAFKA_ADVERTISED_PORT
-fi
-
-if [[ -z "$KAFKA_BROKER_ID" ]]; then
-    if [[ -n "$BROKER_ID_COMMAND" ]]; then
-        KAFKA_BROKER_ID=$(eval "$BROKER_ID_COMMAND")
-        export KAFKA_BROKER_ID
-    else
-        # By default auto allocate broker ID
-        export KAFKA_BROKER_ID=-1
-    fi
-fi
-
-if [[ -z "$KAFKA_LOG_DIRS" ]]; then
-    export KAFKA_LOG_DIRS="/kafka/kafka-logs-$HOSTNAME"
-fi
-
-if [[ -n "$KAFKA_HEAP_OPTS" ]]; then
-    sed -r -i 's/(export KAFKA_HEAP_OPTS)="(.*)"/\1="'"$KAFKA_HEAP_OPTS"'"/g' "$KAFKA_HOME/bin/kafka-server-start.sh"
-    unset KAFKA_HEAP_OPTS
-fi
-
-if [[ -n "$HOSTNAME_COMMAND" ]]; then
-    HOSTNAME_VALUE=$(eval "$HOSTNAME_COMMAND")
-
-    # Replace any occurences of _{HOSTNAME_COMMAND} with the value
-    IFS=$'\n'
-    for VAR in $(env); do
-        if [[ $VAR =~ ^KAFKA_ && "$VAR" =~ "_{HOSTNAME_COMMAND}" ]]; then
-            eval "export ${VAR//_\{HOSTNAME_COMMAND\}/$HOSTNAME_VALUE}"
-        fi
-    done
-    IFS=$ORIG_IFS
-fi
-
-if [[ -n "$PORT_COMMAND" ]]; then
-    PORT_VALUE=$(eval "$PORT_COMMAND")
-
-    # Replace any occurences of _{PORT_COMMAND} with the value
-    IFS=$'\n'
-    for VAR in $(env); do
-        if [[ $VAR =~ ^KAFKA_ && "$VAR" =~ "_{PORT_COMMAND}" ]]; then
-	    eval "export ${VAR//_\{PORT_COMMAND\}/$PORT_VALUE}"
-        fi
-    done
-    IFS=$ORIG_IFS
-fi
-
-if [[ -n "$RACK_COMMAND" && -z "$KAFKA_BROKER_RACK" ]]; then
-    KAFKA_BROKER_RACK=$(eval "$RACK_COMMAND")
-    export KAFKA_BROKER_RACK
-fi
-
-# Eval listeners command
-if [[ -n "$KAFKA_LISTENERS_COMMAND" ]]; then
-    KAFKA_LISTENERS=$(eval "$KAFKA_LISTENERS_COMMAND")
-    export KAFKA_LISTENERS
-    unset KAFKA_LISTENERS_COMMAND
-fi
-
-# Try and configure minimal settings or exit with error if there isn't enough information
-if [[ -z "$KAFKA_ADVERTISED_HOST_NAME$KAFKA_LISTENERS" ]]; then
-    if [[ -n "$KAFKA_ADVERTISED_LISTENERS" ]]; then
-        echo "ERROR: Missing environment variable KAFKA_LISTENERS. Must be specified when using KAFKA_ADVERTISED_LISTENERS"
-        exit 1
-    elif [[ -z "$HOSTNAME_VALUE" ]]; then
-        echo "ERROR: No listener or advertised hostname configuration provided in environment."
-        echo "       Please define KAFKA_LISTENERS / (deprecated) KAFKA_ADVERTISED_HOST_NAME"
-        exit 1
-    fi
-
-    # Maintain existing behaviour
-    # If HOSTNAME_COMMAND is provided, set that to the advertised.host.name value if listeners are not defined.
-    export KAFKA_ADVERTISED_HOST_NAME="$HOSTNAME_VALUE"
-fi
-
 #Issue newline to config file in case there is not one already
-echo "" >> "$KAFKA_HOME/config/server.properties"
+echo "" >> "$CONF_FILE"
 
 (
     function updateConfig() {
@@ -110,15 +59,18 @@ echo "" >> "$KAFKA_HOME/config/server.properties"
 
         # If config exists in file, replace it. Otherwise, append to file.
         if grep -E -q "^#?$key=" "$file"; then
-            sed -r -i "s@^#?$key=.*@$key=$value@g" "$file" #note that no config values may contain an '@' char
+            if [[ "$key" == "controller.quorum.voters" ]]; then
+                sed -i '/^controller\.quorum\.voters/d' "$file"
+                echo "$key=$value" >> "$file"
+            else
+                sed -r -i "s@^#?$key=.*@$key=$value@g" "$file" #note that no config values may contain an '@' char
+            fi
         else
             echo "$key=$value" >> "$file"
         fi
     }
 
-    # Fixes #312
-    # KAFKA_VERSION + KAFKA_HOME + grep -rohe KAFKA[A-Z0-0_]* /opt/kafka/bin | sort | uniq | tr '\n' '|'
-    EXCLUSIONS="|KAFKA_VERSION|KAFKA_HOME|KAFKA_DEBUG|KAFKA_GC_LOG_OPTS|KAFKA_HEAP_OPTS|KAFKA_JMX_OPTS|KAFKA_JVM_PERFORMANCE_OPTS|KAFKA_LOG|KAFKA_OPTS|"
+    EXCLUSIONS="|KAFKA_VERSION|KAFKA_HOME|KAFKA_DEBUG|KAFKA_GC_LOG_OPTS|KAFKA_HEAP_OPTS|KAFKA_JMX_OPTS|KAFKA_JVM_PERFORMANCE_OPTS|KAFKA_LOG|KAFKA_OPTS|KAFKA_BOOTSTRAP_SERVER|KAFKA_START_MODE|"
 
     # Read in env as a new-line separated array. This handles the case of env variables have spaces and/or carriage returns. See #313
     IFS=$'\n'
@@ -132,7 +84,7 @@ echo "" >> "$KAFKA_HOME/config/server.properties"
 
         if [[ $env_var =~ ^KAFKA_ ]]; then
             kafka_name=$(echo "$env_var" | cut -d_ -f2- | tr '[:upper:]' '[:lower:]' | tr _ .)
-            updateConfig "$kafka_name" "${!env_var}" "$KAFKA_HOME/config/server.properties"
+            updateConfig "$kafka_name" "${!env_var}" "$CONF_FILE"
         fi
 
         if [[ $env_var =~ ^LOG4J_ ]]; then
@@ -142,8 +94,33 @@ echo "" >> "$KAFKA_HOME/config/server.properties"
     done
 )
 
-if [[ -n "$CUSTOM_INIT_SCRIPT" ]] ; then
-  eval "$CUSTOM_INIT_SCRIPT"
+function formatKraft() {
+    if [[ -z "$KAFKA_CLUSTER_ID" ]]; then
+        echo "ERROR: missing mandatory config: KAFKA_CLUSTER_ID"
+        exit 1
+    fi;
+
+    $KAFKA_HOME/bin/kafka-storage.sh format -t "$KAFKA_CLUSTER_ID" -c "$CONF_FILE"
+}
+
+if [[ "$KAFKA_START_MODE" == "kraft" ]]; then
+    meta_properties_file="${KAFKA_METADATA_LOG_DIRS}/meta.properties"
+
+    if [[ -f "$meta_properties_file" ]]; then
+        echo "The meta.properties file exists, checking the cluster.id..."
+
+        cluster_id=$(grep "^cluster.id=" "$meta_properties_file" | cut -d= -f2)
+        if [[ -n "$cluster_id" ]]; then
+            echo "Cluster ID found: $cluster_id"
+        else
+            echo "Cluster ID not found in $meta_properties_file. Initializing the storage."
+            formatKraft
+        fi
+    else
+        echo "The meta.properties file does not exist. Initializing the storage."
+        formatKraft
+    fi
+    
 fi
 
-exec "$KAFKA_HOME/bin/kafka-server-start.sh" "$KAFKA_HOME/config/server.properties"
+exec "$KAFKA_HOME/bin/kafka-server-start.sh" $CONF_FILE

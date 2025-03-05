@@ -1,8 +1,8 @@
-FROM openjdk:8u201-jre-alpine
+FROM eclipse-temurin:11.0.22_7-jre-alpine
 
-ARG kafka_version=3.4.0
+ARG kafka_version=3.9.0
 ARG scala_version=2.13
-ARG glibc_version=2.31-r0
+ARG glibc_version=2.35-r1
 
 LABEL org.label-schema.name="kafka" \
       org.label-schema.description="Apache Kafka" \
@@ -15,18 +15,19 @@ ENV KAFKA_VERSION=$kafka_version \
 
 ENV PATH=${PATH}:${KAFKA_HOME}/bin
 
-COPY scripts/download-kafka.sh scripts/start-kafka.sh scripts/broker-list.sh scripts/create-topics.sh scripts/versions.sh /tmp/
+COPY scripts/download-kafka.sh scripts/start-kafka.sh scripts/create-topics.sh /tmp/
 
 RUN apk add --no-cache bash curl jq docker \
  && chmod a+x /tmp/*.sh \
- && mv /tmp/start-kafka.sh /tmp/broker-list.sh /tmp/create-topics.sh /tmp/versions.sh /usr/bin \
- && sync && /tmp/download-kafka.sh \
+ && mv /tmp/start-kafka.sh /tmp/create-topics.sh /usr/bin \
+ && sync \
+ && /tmp/download-kafka.sh \
  && tar xfz /tmp/kafka_${SCALA_VERSION}-${KAFKA_VERSION}.tgz -C /opt \
  && rm /tmp/kafka_${SCALA_VERSION}-${KAFKA_VERSION}.tgz \
  && ln -s /opt/kafka_${SCALA_VERSION}-${KAFKA_VERSION} ${KAFKA_HOME} \
- && rm /tmp/* \
+ && rm -r /tmp/* \
  && wget https://github.com/sgerrand/alpine-pkg-glibc/releases/download/${GLIBC_VERSION}/glibc-${GLIBC_VERSION}.apk \
- && apk add --no-cache --allow-untrusted glibc-${GLIBC_VERSION}.apk \
+ && apk add --no-cache --force-overwrite --allow-untrusted glibc-${GLIBC_VERSION}.apk \
  && rm glibc-${GLIBC_VERSION}.apk
 
 VOLUME ["/kafka"]

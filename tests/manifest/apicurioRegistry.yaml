@@ -19,7 +19,7 @@ spec:
         - containerPort: 8080
         env:
         - name: REGISTRY_DATASOURCE_URL
-          value: "jdbc:postgresql://postgres-svc.default.svc.cluster.local:5432/registry"
+          value: "jdbc:postgresql://postgresql-svc.default.svc.cluster.local:5432/registry"
         - name: REGISTRY_DATASOURCE_USERNAME
           value: postgres
         - name: REGISTRY_DATASOURCE_PASSWORD
